@@ -12,6 +12,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import threading
 import time
 import webbrowser
@@ -29,6 +30,11 @@ PORT = 5250
 
 ENV_PYTHONPATH = ":".join(str(GENIE / r) for r in
                           ("genie-core", "genie-transcript", "genie-vid2pdf"))
+sys.path.insert(0, str(GENIE / "genie-core"))
+
+# 轉寫後端:local(mlx-whisper,不外傳音訊)或 groq(雲端 whisper-large-v3,
+# 約 100x 實時、對嘈雜音源更準,音訊會離開本機)。
+_backend = "local"
 
 app = Flask(__name__)
 
@@ -206,6 +212,8 @@ def worker():
         out.mkdir(parents=True, exist_ok=True)
         if task == "notes":
             cmd = [PY, "-m", "genie_transcript.cli", str(video), "-o", str(out)]
+            if _backend == "groq":
+                cmd += ["--whisper-backend", "groq"]
             log = NOTES / (name + ".log")
         else:
             cmd = [PY, "-m", "genie_vid2pdf.cli", str(video),
@@ -316,7 +324,11 @@ def state():
                 mins += est_minutes(name, missing)
         ranges[key] = {"count": cnt, "est": fmt_est(mins)}
 
-    return jsonify({"videos": vids, "current": cur, "queued": qn,
+    from genie_core.audio.transcribe import read_env_value
+    return jsonify({"backend": _backend,
+                    "has_groq_key": bool(os.environ.get("GROQ_API_KEY")
+                                         or read_env_value("GROQ_API_KEY")),
+                    "videos": vids, "current": cur, "queued": qn,
                     "queue": [{"name": n, "task": t, "est": fmt_est(est_minutes(n, [t]))}
                               for n, t in pending],
                     "queue_est": fmt_est(queue_min) if (qn or cur) else "",
@@ -379,6 +391,39 @@ def clear_queue():
     with _lock:
         _pending.clear()
     return jsonify({"status": "cleared"})
+
+
+@app.route("/api/backend", methods=["POST"])
+def set_backend():
+    global _backend
+    from genie_core.audio.transcribe import read_env_value
+    data = request.get_json(silent=True) or {}
+    b = data.get("backend")
+    if b not in ("local", "groq"):
+        return jsonify({"error": "backend must be local or groq"}), 400
+    if b == "groq" and not (os.environ.get("GROQ_API_KEY")
+                            or read_env_value("GROQ_API_KEY")):
+        return jsonify({"error": "no_key"}), 428   # 前端據此彈出輸入框
+    _backend = b
+    return jsonify({"backend": _backend})
+
+
+@app.route("/api/groq_key", methods=["POST"])
+def save_groq_key():
+    """驗證金鑰有效後才寫入 ~/.env(權限 600)。"""
+    global _backend
+    from genie_core.audio.transcribe import verify_groq_key, write_env_value
+    data = request.get_json(silent=True) or {}
+    key = (data.get("key") or "").strip()
+    if not key:
+        return jsonify({"ok": False, "message": "請輸入金鑰"}), 400
+    ok, message = verify_groq_key(key)
+    if not ok:
+        return jsonify({"ok": False, "message": message}), 400
+    write_env_value("GROQ_API_KEY", key)
+    os.environ["GROQ_API_KEY"] = key
+    _backend = "groq"
+    return jsonify({"ok": True, "message": message})
 
 
 @app.route("/api/current_action", methods=["POST"])
@@ -472,7 +517,29 @@ a{color:#3466aa}
   <button onclick="act('/api/rebuild_index',{})">重建總覽</button>
   <a href="/notes/INDEX.html" target="_blank">開啟總覽 INDEX</a>
 </div>
+<div class="bar">
+  <span style="color:#444">轉寫引擎:</span>
+  <label><input type="radio" name="be" value="local" id="be-local"> 本地(mlx,音訊不外傳)</label>
+  <label><input type="radio" name="be" value="groq" id="be-groq"> Groq 雲端(約 100× 快、更準,音訊上傳)</label>
+  <span id="bekey" class="status"></span>
+</div>
 <div class="bar"><span class="status" id="status">載入中…</span></div>
+<div id="keymodal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:9">
+  <div style="background:#fff;max-width:520px;margin:12vh auto;padding:20px 24px;border-radius:10px">
+    <h3 style="margin:0 0 8px">輸入 Groq API 金鑰</h3>
+    <p style="color:#666;font-size:.9em;margin:0 0 12px">
+      金鑰會即時驗證,通過後存於 <code>~/.env</code>(權限 600),日後自動沿用。
+      免費申請:<a href="https://console.groq.com/keys" target="_blank">console.groq.com/keys</a>
+    </p>
+    <input type="password" id="keyinput" placeholder="gsk_…" autocomplete="off"
+           style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-family:monospace">
+    <div id="keymsg" style="min-height:20px;margin:8px 0;font-size:.9em"></div>
+    <div style="text-align:right">
+      <button onclick="closeKey()">取消</button>
+      <button class="primary" id="keysave" onclick="saveKey()">驗證並儲存</button>
+    </div>
+  </div>
+</div>
 <div id="queuebox" style="display:none">
   <h3 style="margin:6px 0;color:#444;font-size:1em">處理佇列(由上而下依序執行)</h3>
   <ol id="qlist" style="background:#fff;border:1px solid #e2e2e2;border-radius:8px;margin:0 0 14px;padding:8px 8px 8px 32px"></ol>
@@ -498,6 +565,11 @@ async function refresh(){
     const d=await r.json();
     let cur="\u9592\u7f6e";
     if(d.current){cur=(d.current.paused?"\u5df2\u66ab\u505c\uff1a":"\u8655\u7406\u4e2d\uff1a")+d.current.name+"\uff08\u9810\u4f30\u5269 "+d.current.remaining+"\uff09";}
+    document.getElementById("be-"+(d.backend||"local")).checked=true;
+    const bk=document.getElementById("bekey");
+    if(d.backend==="groq"){bk.innerHTML='\u2713 \u91d1\u9470\u5df2\u8a2d\u5b9a <button class="mini" onclick="openKey()">\u66f4\u63db</button>';}
+    else if(d.has_groq_key){bk.innerHTML='<button class="mini" onclick="openKey()">\u66f4\u63db Groq \u91d1\u9470</button>';}
+    else{bk.textContent="";}
     let st=cur+" \u00b7 \u4f47\u5217 "+d.queued+" \u9805";
     if(d.queue_est){st+="\uff08\u9810\u4f30\u5269 "+d.queue_est+"\uff09";}
     document.getElementById("status").textContent=st;
@@ -552,6 +624,28 @@ async function refresh(){
     document.getElementById("status").textContent="\u8f09\u5165\u5931\u6557\uff1a"+e;
   }
 }
+function openKey(){document.getElementById("keymodal").style.display="";document.getElementById("keyinput").focus();}
+function closeKey(){document.getElementById("keymodal").style.display="none";document.getElementById("keymsg").textContent="";document.getElementById("keyinput").value="";refresh();}
+async function saveKey(){
+  const btn=document.getElementById("keysave"),msg=document.getElementById("keymsg");
+  const key=document.getElementById("keyinput").value.trim();
+  if(!key){msg.style.color="#b91c1c";msg.textContent="\u8acb\u8f38\u5165\u91d1\u9470";return;}
+  btn.disabled=true;msg.style.color="#666";msg.textContent="\u9a57\u8b49\u4e2d\u2026";
+  try{
+    const r=await fetch("/api/groq_key",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({key:key})});
+    const d=await r.json();
+    if(d.ok){msg.style.color="#1d7a35";msg.textContent="\u2713 "+d.message;setTimeout(closeKey,900);}
+    else{msg.style.color="#b91c1c";msg.textContent=d.message;}
+  }catch(e){msg.style.color="#b91c1c";msg.textContent="\u9a57\u8b49\u5931\u6557\uff1a"+e;}
+  btn.disabled=false;
+}
+async function setBackend(b){
+  const r=await fetch("/api/backend",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({backend:b})});
+  if(r.status===428){openKey();return;}   // 尚未設定金鑰
+  refresh();
+}
+document.getElementById("be-local").addEventListener("change",function(){setBackend("local");});
+document.getElementById("be-groq").addEventListener("change",function(){setBackend("groq");});
 document.getElementById("rows").addEventListener("click",function(ev){
   const b=ev.target.closest("button.enq");
   if(b){act("/api/enqueue",{name:b.dataset.name,tasks:[b.dataset.task]});}

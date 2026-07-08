@@ -32,6 +32,11 @@ cp genie-panel/影片處理面板.command ~/Movies/genie-notes/
 - **佇列**:由上而下依序執行;每項可置頂/上移/下移/移除;第一條是進行中任務,
   可 ⏸ 暫停(SIGSTOP 整個 process group,GPU 立即釋放)/ ▶ 繼續 / 重啟 / 中止
 - **預估**:筆記 ≈ 片長 12%、圖文 PDF ≈ 片長 9%(實測值,見 dashboard.py 常數)
+- **轉寫引擎切換**:
+  - **本地**(mlx-whisper medium):音訊不離開機器,約 25× 實時,佔 GPU
+  - **Groq 雲端**(whisper-large-v3):約 100× 實時、嘈雜音源明顯更準,不佔 GPU,
+    但**音訊會上傳**。首次選用會彈框要求 API 金鑰,即時驗證後存入 `~/.env`
+    (權限 600),日後自動沿用;免費額度 8 小時音訊/日
 - **INDEX**:每完成一部筆記自動重建 `~/Movies/genie-notes/INDEX.md/html` 總覽
 
 ## 行為說明
@@ -40,3 +45,4 @@ cp genie-panel/影片處理面板.command ~/Movies/genie-notes/
 - 「清空佇列」不中斷進行中任務;要全停:先清空佇列,再按「中止」
 - 面板結束(Ctrl-C / 關 Terminal)會終止進行中的子程序,不留孤兒
 - 只綁 127.0.0.1
+- Groq 金鑰只寫入 `~/.env`,不進 repo、不回傳頁面(前端只顯示「已設定」)
