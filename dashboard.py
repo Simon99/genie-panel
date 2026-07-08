@@ -324,10 +324,14 @@ def state():
                 mins += est_minutes(name, missing)
         ranges[key] = {"count": cnt, "est": fmt_est(mins)}
 
-    from genie_core.audio.transcribe import read_env_value
+    from genie_core.audio.transcribe import read_env_value, groq_usage_today
+    u = groq_usage_today()
     return jsonify({"backend": _backend,
                     "has_groq_key": bool(os.environ.get("GROQ_API_KEY")
                                          or read_env_value("GROQ_API_KEY")),
+                    "groq_usage": {"used_min": round(u["audio_seconds"] / 60),
+                                   "limit_min": round(u["limit_seconds"] / 60),
+                                   "remaining_min": round(u["remaining_seconds"] / 60)},
                     "videos": vids, "current": cur, "queued": qn,
                     "queue": [{"name": n, "task": t, "est": fmt_est(est_minutes(n, [t]))}
                               for n, t in pending],
@@ -520,7 +524,7 @@ a{color:#3466aa}
 <div class="bar">
   <span style="color:#444">轉寫引擎:</span>
   <label><input type="radio" name="be" value="local" id="be-local"> 本地(mlx,音訊不外傳)</label>
-  <label><input type="radio" name="be" value="groq" id="be-groq"> Groq 雲端(約 100× 快、更準,音訊上傳)</label>
+  <label><input type="radio" name="be" value="groq" id="be-groq"> Groq 雲端(約 100× 快、更準,音訊上傳;額度用盡自動改用本地)</label>
   <span id="bekey" class="status"></span>
 </div>
 <div class="bar"><span class="status" id="status">載入中…</span></div>
@@ -567,7 +571,11 @@ async function refresh(){
     if(d.current){cur=(d.current.paused?"\u5df2\u66ab\u505c\uff1a":"\u8655\u7406\u4e2d\uff1a")+d.current.name+"\uff08\u9810\u4f30\u5269 "+d.current.remaining+"\uff09";}
     document.getElementById("be-"+(d.backend||"local")).checked=true;
     const bk=document.getElementById("bekey");
-    if(d.backend==="groq"){bk.innerHTML='\u2713 \u91d1\u9470\u5df2\u8a2d\u5b9a <button class="mini" onclick="openKey()">\u66f4\u63db</button>';}
+    if(d.backend==="groq"){
+      const u=d.groq_usage||{};
+      const quota=u.limit_min?(" \u00b7 \u4eca\u65e5\u7528\u91cf "+u.used_min+"/"+u.limit_min+" \u5206\u9418\u97f3\u8a0a"):"";
+      bk.innerHTML='\u2713 \u91d1\u9470\u5df2\u8a2d\u5b9a'+quota+' <button class="mini" onclick="openKey()">\u66f4\u63db</button>';
+    }
     else if(d.has_groq_key){bk.innerHTML='<button class="mini" onclick="openKey()">\u66f4\u63db Groq \u91d1\u9470</button>';}
     else{bk.textContent="";}
     let st=cur+" \u00b7 \u4f47\u5217 "+d.queued+" \u9805";

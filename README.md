@@ -36,7 +36,8 @@ cp genie-panel/影片處理面板.command ~/Movies/genie-notes/
   - **本地**(mlx-whisper medium):音訊不離開機器,約 25× 實時,佔 GPU
   - **Groq 雲端**(whisper-large-v3):約 100× 實時、嘈雜音源明顯更準,不佔 GPU,
     但**音訊會上傳**。首次選用會彈框要求 API 金鑰,即時驗證後存入 `~/.env`
-    (權限 600),日後自動沿用;免費額度 8 小時音訊/日
+    (權限 600),日後自動沿用;免費額度 8 小時音訊/日,面板顯示今日用量。
+    **額度用盡/限流/斷線時自動改用本地**完成該部(金鑰無效則直接報錯)
 - **INDEX**:每完成一部筆記自動重建 `~/Movies/genie-notes/INDEX.md/html` 總覽
 
 ## 行為說明
