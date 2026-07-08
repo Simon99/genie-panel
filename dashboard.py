@@ -330,8 +330,6 @@ def state():
                     "has_groq_key": bool(os.environ.get("GROQ_API_KEY")
                                          or read_env_value("GROQ_API_KEY")),
                     "groq_usage": {"used_min": round(u["audio_seconds"] / 60),
-                                   "limit_min": round(u["limit_seconds"] / 60),
-                                   "remaining_min": round(u["remaining_seconds"] / 60),
                                    "requests_remaining": u["requests_remaining"],
                                    "requests_limit": u["requests_limit"],
                                    "updated_at": u["updated_at"]},
@@ -576,7 +574,7 @@ async function refresh(){
     const bk=document.getElementById("bekey");
     if(d.backend==="groq"){
       const u=d.groq_usage||{};
-      let quota=u.limit_min?(" \u00b7 \u97f3\u8a0a "+u.used_min+"/"+u.limit_min+" \u5206\uff08\u672c\u6a5f\u4f30\u8a08\uff09"):"";
+      let quota=u.used_min?(" \u00b7 \u4eca\u65e5\u5df2\u9001 "+u.used_min+" \u5206\u9418\u97f3\u8a0a\uff08\u672c\u6a5f\u7d2f\u8a08\uff09"):"";
       if(u.requests_remaining!==null&&u.requests_remaining!==undefined){
         quota+=" \u00b7 \u8acb\u6c42\u5269 "+u.requests_remaining+"/"+(u.requests_limit||"?")+"\uff08Groq \u56de\u5831 "+(u.updated_at||"")+"\uff09";
       }
